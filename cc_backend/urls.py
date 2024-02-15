@@ -23,6 +23,7 @@ urlpatterns = [
     path(r'', RedirectView.as_view(url='/admin/home', permanent=False), name='index'),
     path('admin/', admin.site.urls),
     path('api/', include('channels.urls')),
+    path('user/', include('user.urls')),
     # ... include other app URLs ...
 
     # Swagger documentation URLs
