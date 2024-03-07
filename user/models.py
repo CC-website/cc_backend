@@ -25,6 +25,7 @@ class User(AbstractUser):
     device_tokens = models.JSONField(default=dict)
     settings = models.JSONField(default=dict)
     blocked_users = models.JSONField(default=dict)
+    about = models.TextField(default='I am on CC!')
 
     groups = models.ManyToManyField(
         Group,

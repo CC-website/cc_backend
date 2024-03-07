@@ -202,3 +202,88 @@ class CheckLogin(APIView):
         except Exception as e:
             print(f'Error checking login status: {str(e)}')
             return Response({'message': f'Error checking login status: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+
+class GetUsers(APIView):
+
+    @staticmethod
+    def process_phone_number(phone_number):
+        # Remove any non-digit characters from the phone number
+        cleaned_number = ''.join(filter(str.isdigit, phone_number))
+
+        # If the number starts with a country code, remove it
+        if cleaned_number.startswith('237') and len(cleaned_number) > 9:
+            cleaned_number = cleaned_number[3:]
+
+        # If the number starts with a '+' sign, remove it
+        if cleaned_number.startswith('+'):
+            cleaned_number = cleaned_number[1:]
+
+        # If the number starts with '1' (for US country code), remove it
+        if cleaned_number.startswith('1') and len(cleaned_number) == 11:
+            cleaned_number = cleaned_number[1:]
+
+        return cleaned_number
+    
+
+    def post(self, request, *args, **kwargs):
+        try:
+            contacts = request.data.get('contacts', [])
+            processed_contacts = []
+            processed_identifiers = set()  # Set to store processed phone numbers or emails
+            count = 0
+
+            for contact in contacts:
+                if contact.get("phoneNumbers"):
+                    number = contact.get("phoneNumbers")[0]['number']
+                    search_item = self.process_phone_number(number)
+                    if search_item not in processed_identifiers:
+                        user = User.objects.filter(phone_number=search_item).first()
+                        if user:
+                            processed_contact = {
+                                'id': count,
+                                'user_id': user.pk,
+                                'name': user.username,
+                                'phone_number': user.phone_number,
+                                'profile_picture': user.profile_picture.url,
+                                'about': user.about
+                            }
+                        else:
+                            processed_contact = {
+                                'id': count,
+                                'name': contact.get("name", ""),
+                                'phone_number': contact.get("phoneNumbers")[0]['number'],
+                                'about': 'Sorry I am not on CC.'
+                            }
+                        processed_contacts.append(processed_contact)
+                        processed_identifiers.add(search_item)
+                        count += 1  # Increment count
+                elif contact.get("emails", ""):
+                    search_item = contact.get("emails")[0]['email']
+                    if search_item not in processed_identifiers:
+                        user = User.objects.filter(email=search_item).first()
+                        if user:
+                            
+                            processed_contact = {
+                                'id': count,
+                                'user_id': user.pk,
+                                'name': user.username,
+                                'email': user.email,
+                                'profile_picture': user.profile_picture.url,
+                                'about': user.about
+                            }
+                        else:
+                            processed_contact = {
+                                'id': count,
+                                'name': contact.get("name", ""),
+                                'email': contact.get("emails")[0]['email'],
+                                'about': 'Sorry I am not on CC.'
+                            }
+                        processed_contacts.append(processed_contact)
+                        processed_identifiers.add(search_item)
+                        count += 1  # Increment count
+
+            return Response({'data': processed_contacts}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'message': f'Error processing contacts: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
