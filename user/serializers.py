@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User
+from .models import Backup, ChatSettings, PrivacyExceptions, PrivacySettings, User, Wallpaper
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     code = serializers.DictField(write_only=True, required=False, allow_null=True)
@@ -49,6 +49,45 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    profile_picture = serializers.SerializerMethodField()
+    
     class Meta:
         model = User
-        fields = ['id','username','email', 'phone_number', 'code']
+        fields = ['id', 'username', 'email', 'phone_number', 'code', 'profile_picture', 'about']
+
+    def get_profile_picture(self, obj):
+        # Assuming 'profile_picture' is a FileField or ImageField
+        if obj.profile_picture:
+            return obj.profile_picture.url
+        return None
+    
+class PrivacyExceptionsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrivacyExceptions
+        fields = '__all__'
+
+class PrivacySettingsSerializer(serializers.ModelSerializer):
+    privacy_exceptions = PrivacyExceptionsSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = PrivacySettings
+        fields = '__all__'
+
+
+class WallpaperSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Wallpaper
+        fields = '__all__'
+
+class BackupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Backup
+        fields = '__all__'
+
+class ChatSettingsSerializer(serializers.ModelSerializer):
+    wallpaper = WallpaperSerializer()
+    backup = BackupSerializer()
+
+    class Meta:
+        model = ChatSettings
+        fields = '__all__'

@@ -1,4 +1,6 @@
 import time
+from django.http import Http404
+from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -7,9 +9,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.hashers import make_password
-from .models import User
+from .models import ChatSettings, User
 
-from .serializers import UserRegistrationSerializer, UserSerializer  # Make sure to import your serializer
+from .serializers import ChatSettingsSerializer, UserRegistrationSerializer, UserSerializer  # Make sure to import your serializer
 
 from django.contrib.auth.forms import AuthenticationForm
 from rest_framework.authtoken.models import Token
@@ -34,9 +36,16 @@ from django.conf import settings
 import jwt
 import time
 import json
-
+import base64
+from django.core.files.base import ContentFile
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
+
+from rest_framework import viewsets
+from rest_framework.response import Response
+from .models import PrivacySettings, PrivacyExceptions
+from .serializers import PrivacySettingsSerializer, PrivacyExceptionsSerializer
+from rest_framework.decorators import action
 
 
 
@@ -174,6 +183,39 @@ class UserInfoAPIView(APIView):
         user = request.user
         serializer = UserSerializer(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def put(self, request, *args, **kwargs):
+        user = request.user
+        username = request.data.get("username", None)
+        about = request.data.get("about", None)
+        phone_number = request.data.get("phone_number", None)
+        email = request.data.get("email", None)
+        image_base64 = request.data.get("profile_picture", None)
+
+        image_data = None
+        if image_base64 and ';base64,' in image_base64:
+            _, imgstr = image_base64.split(';base64,')
+            ext = 'png'
+            image_data = ContentFile(base64.b64decode(imgstr), name=f"{username}_{user.id}_profile.{ext}")
+
+        user_data = User.objects.filter(id=user.id).first()
+        if username is not None:
+            user_data.username = username
+        if about is not None:
+            user_data.about = about
+        if phone_number is not None:
+            user_data.phone_number = phone_number
+        if email is not None:
+            user_data.email = email
+        if image_data is not None:
+            user_data.profile_picture = image_data
+        
+        user_data.save()
+
+        serializer = UserSerializer(user_data)
+        response = serializer.data
+        print(response)
+        return Response(response, status=200)
 
 
 
@@ -287,3 +329,98 @@ class GetUsers(APIView):
             return Response({'data': processed_contacts}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({'message': f'Error processing contacts: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class PrivacySettingsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get the privacy settings for the authenticated user
+        user = request.user
+        privacy_settings = get_object_or_404(PrivacySettings, user=user)
+
+        serializer = PrivacySettingsSerializer(privacy_settings)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        # Get the authenticated user
+        user = request.user
+
+        # Extract type and option from request data
+        type = request.data.get('type')
+        option = request.data.get('option')
+        callOption = request.data.get('callOption', None)
+        messageValue = request.data.get('messageValue', None)
+        if callOption is not None:
+            option = bool(callOption)
+        elif messageValue is not None:
+            print('Nigel', messageValue)
+            option = messageValue
+        else:
+            option = int(option)
+
+
+        # Check if both type and option are provided
+        if type is None or option is None:
+            return Response({'error': 'Both "type" and "option" must be provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if the provided type is a valid field in PrivacySettings
+        valid_fields = [field.name for field in PrivacySettings._meta.get_fields()]
+        if type not in valid_fields:
+            return Response({'error': f'Invalid privacy setting type: {type}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get or create privacy settings for the authenticated user
+        privacy_settings, _ = PrivacySettings.objects.get_or_create(user=user)
+
+        # Update the privacy settings
+        setattr(privacy_settings, type, option)
+        privacy_settings.save()
+
+        # Serialize and return the updated privacy settings
+        serializer = PrivacySettingsSerializer(privacy_settings)
+        print(serializer.data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    
+
+class PrivacyExceptionsViewSet(viewsets.ModelViewSet):
+    queryset = PrivacyExceptions.objects.all()
+    serializer_class = PrivacyExceptionsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
+    
+
+
+
+class ChatSettingsDetail(APIView):
+    def get_object(self):
+        user = self.request.user
+        try:
+            return ChatSettings.objects.get(user=user)
+        except ChatSettings.DoesNotExist:
+            raise Http404
+
+    def get(self, request, format=None):
+        chat_settings = self.get_object()
+        serializer = ChatSettingsSerializer(chat_settings)
+        return Response(serializer.data)
+
+    def patch(self, request, format=None):
+        chat_settings = self.get_object()
+        serializer = ChatSettingsSerializer(chat_settings, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
