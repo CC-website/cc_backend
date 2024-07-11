@@ -30,6 +30,7 @@ ALLOWED_HOSTS = ['*']
 # Application definition
 
 INSTALLED_APPS = [
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -40,9 +41,25 @@ INSTALLED_APPS = [
     'rest_framework',
     'drf_yasg',
     'corsheaders',
-    'channels',
+    'community',
     'user',
+    'messaging',
 ]
+
+
+# Specify the ASGI application
+ASGI_APPLICATION = 'cc_backend.asgi.application'
+
+# Define channel layers
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [('127.0.0.1', 6379)],  # Update this if you have a different Redis configuration
+        },
+    },
+}
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -97,6 +114,11 @@ REST_FRAMEWORK = {
         # Add any other authentication classes you need here
     ],
 }
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:19006",
+]
+
 
 # Set the expiration time for access and refresh tokens
 SIMPLE_JWT = {

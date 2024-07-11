@@ -1,5 +1,5 @@
 from django.urls import path, include
-from .views import LogoutAPIView, RegistrationAPIView, LoginAPIView, CheckLogin, UserInfoAPIView, GetUsers, PrivacySettingsAPIView, PrivacyExceptionsViewSet
+from .views import LogoutAPIView, RegistrationAPIView, LoginAPIView, CheckLogin, UserInfoAPIView, GetUsers, PrivacySettingsAPIView, PrivacyExceptionsViewSet, messaging
 from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
@@ -14,5 +14,6 @@ urlpatterns = [
     path('logout/', LogoutAPIView.as_view(), name='logout'),
     path('user-info/', UserInfoAPIView.as_view(), name='user-info'),
     path('get-users/', GetUsers.as_view(), name='get_users'),
+    path('messaging/', messaging),
     # Add other user-related APIs as needed
 ]
