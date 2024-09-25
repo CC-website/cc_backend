@@ -1,11 +1,64 @@
 from rest_framework import generics, permissions
 
-from user.models import User
-from .models import Message, GroupChat
+from user.models import Message, User
+from .models import GroupChat, SignalKey
 from .serializers import MessageSerializer, GroupChatSerializer
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework import status
+
+# views.py
+from django.shortcuts import get_object_or_404
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
+
+
+@csrf_exempt
+def exchange_keys(request):
+    if request.method == 'POST':
+        user = request.user
+        identity_key = request.POST.get('identity_key')
+        signed_pre_key = request.POST.get('signed_pre_key')
+        pre_key = request.POST.get('pre_key')
+
+        SignalKey.objects.update_or_create(
+            user=user,
+            defaults={'identity_key': identity_key, 'signed_pre_key': signed_pre_key, 'pre_key': pre_key}
+        )
+        return JsonResponse({'status': 'success'})
+
+@csrf_exempt
+def send_message(request):
+    if request.method == 'POST':
+        sender = request.user
+        receiver_id = request.POST.get('receiver_id')
+        plaintext = request.POST.get('message')
+        
+        receiver = get_object_or_404(User, pk=receiver_id)
+        receiver_keys = get_object_or_404(SignalKey, user=receiver)
+        
+        ciphertext =  plaintext
+        
+        Message.objects.create(sender=sender, receiver=receiver, ciphertext=ciphertext)
+        
+        return JsonResponse({'status': 'success'})
+
+@csrf_exempt
+def fetch_messages(request):
+    if request.method == 'GET':
+        user = request.user
+        messages = Message.objects.filter(receiver=user)
+        decrypted_messages = [
+            {
+                'sender': msg.sender.username,
+                'message': msg.ciphertext,
+                'timestamp': msg.timestamp
+            } for msg in messages
+        ]
+        
+        return JsonResponse({'messages': decrypted_messages})
+
 
 
 class MessageListCreateView(generics.ListCreateAPIView):

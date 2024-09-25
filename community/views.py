@@ -1,3 +1,4 @@
+import uuid
 from django.shortcuts import get_object_or_404
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -8,16 +9,18 @@ from django.utils.decorators import method_decorator
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import generics
+from rest_framework.decorators import action
+import ast
 
 from user.models import User
 from user.serializers import UserSerializer
-from .models import Channel, Permission, PermissionAssignment, SubChannel, Group
+from .models import MFA, Channel, ChannelMembers, InviteLink, Permission, PermissionAssignment, SubChannel, Group, SubChannelGroupMembers, SubChannelMembers
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, viewsets
 from .models import Channel
-from .serializers import ChannelSerializer, ChannelSerializer2, PermissionAssignmentSerializer, PermissionSerializer, SubChannelSerializer, SubGroupSerializer
+from .serializers import ChannelJoinSerializer, ChannelMembersSerializer, ChannelMembersSerializer1, ChannelOwnerSerializer, ChannelSerializer, ChannelSerializer2, CommunitySerializer, GroupJoinSerializer, GroupMembersSerializer, InviteLinkSerializer, MFADataSerializer, PermissionAssignmentSerializer, PermissionSerializer, SubChannelJoinSerializer, SubChannelMembersSerializer1, SubChannelSerializer, SubGroupSerializer
 from rest_framework.parsers import MultiPartParser, FormParser
 import json
 from django.views.decorators.http import require_POST
@@ -27,57 +30,38 @@ from django.core.files.base import ContentFile
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db.models import Q
+from rest_framework import viewsets, mixins
 
 
 
 
 class ChannelPermissionCheckerView(View):
     def get_user_permissions(self, user):
+        # Correct field name for the relationship
+        channels = Channel.objects.filter(
+            Q(owner=user) | Q(channel_member__user=user, channel_member__status__in=[1, 2, 3, 4, 9, 10])
+        )
+        user_permissions_dict = {}
 
-        # Fetch channels where the user is an owner, admin, or member
-        channels = Channel.objects.filter(Q(owner=user) | Q(admins=user) | Q(members=user))
-        
-        if channels:
-            user_permissions_dict = {}
-            
-            for channel in channels:
-                # Determine permission type for the user
-                if channel.owner == user:
-                    permission_type = 'admin'
-                elif user in channel.admins.all():
-                    permission_type = 'admin'
-                elif user in channel.members.all():
-                    permission_type = 'member'
-                else:
-                    continue  # Skip to the next channel if the user is not associated with it
-                
-                # Retrieve permission assignments for the channel and user
-                permission_assignments = PermissionAssignment.objects.filter(target_id=channel.id, target_type='channel', permission_type=permission_type)
+        for channel in channels:
+            permission_assignments = PermissionAssignment.objects.filter(
+                target_id=channel.id,
+                target_type='community'  # Match target type to the appropriate value
+            )
 
-                user_channel_permissions = []
-                if(channel.owner):
-                    user_channel_permissions.append({
-                        'permissions': 'owner'
-                    })
+            user_channel_permissions = []
+            if channel.owner == user:
+                user_channel_permissions.append('owner')
 
-                # Iterate through permission assignments
-                for assignment in permission_assignments:
-                    # Check if the user has exception permissions
-                    if user not in assignment.permission.first().exception_users.all():
-                        # Add permissions to the user_channel_permissions list
-                      
-                        user_channel_permissions.append({
-                            'permissions': assignment.permission.all()
-                        })
-                        
-                        
+            for assignment in permission_assignments:
+                # Check permissions only if the user is not in the exception list
+                for permission in assignment.permission.all():
+                    if assignment.all_members or user not in permission.exception_users.all():
+                        user_channel_permissions.append(permission.get_permission_type_display())
 
-                # Add the user permissions for the current channel to the user_permissions_dict
-                user_permissions_dict[channel.id] = {'user_permissions': user_channel_permissions}
+            user_permissions_dict[channel.id] = {'user_permissions': user_channel_permissions}
 
-            return user_permissions_dict
-
-        return False
+        return user_permissions_dict if user_permissions_dict else None
 
     def get(self, request):
         user = request.user
@@ -90,47 +74,39 @@ class ChannelPermissionCheckerView(View):
 
 
 
-
-
 class SubChannelPermissionCheckerView(View):
     def get_user_permissions(self, user):
-        # Fetch subchannels where the user is an owner, admin, or member
-        subchannels = SubChannel.objects.filter(Q(channel__owner=user) | Q(admins=user) | Q(members=user))
+        # Correct field name for the relationship
+        subchannels = SubChannel.objects.filter(
+            Q(channel__owner=user) | Q(sub_channel_member__user=user)
+        ).distinct()
 
-        if subchannels:
-            user_permissions_dict = {}
-            
-            for subchannel in subchannels:
-                # Determine permission type for the user
-                if subchannel.channel.owner == user:
-                    permission_type = 'admin'
-                elif user in subchannel.admins.all():
-                    permission_type = 'admin'
-                elif user in subchannel.members.all():
-                    permission_type = 'member'
-                else:
-                    continue  # Skip to the next subchannel if the user is not associated with it
-                
-                # Retrieve permission assignments for the subchannel and user
-                permission_assignments = PermissionAssignment.objects.filter(target_id=subchannel.id, target_type='subchannel', permission_type=permission_type)
+        user_permissions_dict = {}
 
-                user_subchannel_permissions = []
+        for subchannel in subchannels:
+            user_subchannel_permissions = []
 
-                # Iterate through permission assignments
+            if subchannel.channel.owner == user:
+                user_subchannel_permissions.append('admin')
+
+            member_permissions = SubChannelMembers.objects.filter(sub_channel=subchannel, user=user).first()
+            if member_permissions:
+                user_subchannel_permissions.append('member')
+
+                permission_assignments = PermissionAssignment.objects.filter(
+                    target_id=subchannel.id,
+                    target_type='sub-community'  # Match target type to the appropriate value
+                )
+
                 for assignment in permission_assignments:
-                    # Check if the user has exception permissions
-                    if user not in assignment.permission.first().exception_users.all():
-                        # Add permissions to the user_subchannel_permissions list
-                        user_subchannel_permissions.append({
-                            'permissions': assignment.permission.all()
-                        })
+                    # Check permissions only if the user is not in the exception list
+                    for permission in assignment.permission.all():
+                        if user not in permission.exception_users.all():
+                            user_subchannel_permissions.append(permission.get_permission_type_display())
 
-                # Add the user permissions for the current subchannel to the user_permissions_dict
-                user_permissions_dict[subchannel.id] = {'user_permissions': user_subchannel_permissions}
+            user_permissions_dict[subchannel.id] = {'user_permissions': user_subchannel_permissions}
 
-            return user_permissions_dict
-
-        return False
+        return user_permissions_dict if user_permissions_dict else None
 
     def get(self, request):
         user = request.user
@@ -142,45 +118,40 @@ class SubChannelPermissionCheckerView(View):
             return JsonResponse({'message': 'User does not have permissions for any subchannel.'}, status=404)
 
 
+
 class GroupPermissionCheckerView(View):
     def get_user_permissions(self, user):
-        # Fetch groups where the user is an owner, admin, or member
-        groups = Group.objects.filter(Q(subchannel__channel__owner=user) | Q(admins=user) | Q(members=user))
+        # Correct field name for the relationship
+        groups = Group.objects.filter(
+            Q(subchannel__channel__owner=user) | Q(sub_channel_group_member__user=user)
+        ).distinct()
 
-        if groups:
-            user_permissions_dict = {}
-            
-            for group in groups:
-                # Determine permission type for the user
-                if group.subchannel.channel.owner == user:
-                    permission_type = 'admin'
-                elif user in group.admins.all():
-                    permission_type = 'admin'
-                elif user in group.members.all():
-                    permission_type = 'member'
-                else:
-                    continue  # Skip to the next group if the user is not associated with it
-                
-                # Retrieve permission assignments for the group and user
-                permission_assignments = PermissionAssignment.objects.filter(target_id=group.id, target_type='group', permission_type=permission_type)
+        user_permissions_dict = {}
 
-                user_group_permissions = []
+        for group in groups:
+            user_group_permissions = []
 
-                # Iterate through permission assignments
+            if group.subchannel.channel.owner == user:
+                user_group_permissions.append('admin')
+
+            member_permissions = SubChannelGroupMembers.objects.filter(group=group, user=user).first()
+            if member_permissions:
+                user_group_permissions.append('member')
+
+                permission_assignments = PermissionAssignment.objects.filter(
+                    target_id=group.id,
+                    target_type='group'  # Match target type to the appropriate value
+                )
+
                 for assignment in permission_assignments:
-                    # Check if the user has exception permissions
-                    if user not in assignment.permission.first().exception_users.all():
-                        # Add permissions to the user_group_permissions list
-                        user_group_permissions.append({
-                            'permissions': assignment.permission.all()
-                        })
+                    # Check permissions only if the user is not in the exception list
+                    for permission in assignment.permission.all():
+                        if user not in permission.exception_users.all():
+                            user_group_permissions.append(permission.get_permission_type_display())
 
-                # Add the user permissions for the current group to the user_permissions_dict
-                user_permissions_dict[group.id] = {'user_permissions': user_group_permissions}
+            user_permissions_dict[group.id] = {'user_permissions': user_group_permissions}
 
-            return user_permissions_dict
-
-        return False
+        return user_permissions_dict if user_permissions_dict else None
 
     def get(self, request):
         user = request.user
@@ -193,14 +164,12 @@ class GroupPermissionCheckerView(View):
 
 
 
-
 class ChannelView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser,)
 
     def post(self, request):
         try:
-            
             data = request.data
             name = data.get('name', '')
             description = data.get('description', '')
@@ -213,20 +182,17 @@ class ChannelView(APIView):
                 image_data = ContentFile(base64.b64decode(imgstr), name=f"{name}_logo.{ext}")
             
             user = User.objects.filter(id=request.user.id).first()
-            data = {'owner':user.id, 'name': name, 'description': description, 'logo':image_data }
+            channel_data = {'owner': user.id, 'name': name, 'description': description, 'logo': image_data}
             
-            serializer = ChannelSerializer(data=data)
+            serializer = ChannelSerializer(data=channel_data)
             
             if serializer.is_valid():
-                
                 serializer.save()
                 return Response(serializer.data, status=201)
             return Response(serializer.errors, status=400)
 
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-        
-
 
     def get(self, request, *args, **kwargs):
         try:
@@ -238,35 +204,25 @@ class ChannelView(APIView):
             # Initialize data list to hold serialized data
             data = []
             
-            # Fetch channels where the user has permissions
-            print(channel_permissions)
             if channel_permissions:
                 channels = Channel.objects.filter(id__in=channel_permissions.keys())
 
-                # Serialize channels
                 for channel in channels:
                     channel_data = model_to_dict(channel, fields=['id', 'name', 'description'])
                     channel_data['image_url'] = request.build_absolute_uri(channel.logo.url) if channel.logo else None
                     channel_data['subchannels'] = []
 
-                    # Check if there are subchannel permissions for this channel
-                    
                     if subchannel_permissions:
-                        # Fetch subchannels where the user has permissions
                         subchannels = SubChannel.objects.filter(channel=channel, id__in=subchannel_permissions.keys())
                         
-                        # Serialize subchannels
                         for subchannel in subchannels:
                             subchannel_data = model_to_dict(subchannel, fields=['id', 'name', 'description'])
                             subchannel_data['image_url'] = request.build_absolute_uri(subchannel.logo.url) if subchannel.logo else None
                             subchannel_data['groups'] = []
 
-                            # Check if there are group permissions for this subchannel
                             if group_permissions:
-                                # Fetch groups where the user has permissions
                                 groups = Group.objects.filter(subchannel=subchannel, id__in=group_permissions.keys())
 
-                                # Serialize groups
                                 for group in groups:
                                     group_data = model_to_dict(group, fields=['id', 'name', 'description'])
                                     group_data['image_url'] = request.build_absolute_uri(group.logo.url) if group.logo else None
@@ -280,9 +236,6 @@ class ChannelView(APIView):
             return Response({'error': 'Channel not found'}, status=404)
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-        
-
-    
 
     def put(self, request, channel_id):
         try:
@@ -298,27 +251,21 @@ class ChannelView(APIView):
                 ext = format.split('/')[-1]
                 image_data = ContentFile(base64.b64decode(imgstr), name=f"{name}_logo.{ext}")
             
-            
-            user = User.objects.filter(id=request.user.id).first()
-
-            if name is not None:
+            if name:
                 channel.name = name
-            if description is not None:
+            if description:
                 channel.description = description
-            if user.id is not None:
-                channel.id = user.id
-            if image_data is not None:
+            if image_data:
                 channel.logo = image_data
 
             channel.save()
             serializer = ChannelSerializer(channel)
-            response = serializer.data
-            print(response)
-            return Response(response, status=200)
+            return Response(serializer.data, status=200)
 
+        except Channel.DoesNotExist:
+            return Response({'error': 'Channel not found'}, status=404)
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-   
 
     def delete(self, request, channel_id):
         try:
@@ -329,7 +276,6 @@ class ChannelView(APIView):
             return Response({'error': 'Channel not found'}, status=404)
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-
 
 
 
@@ -590,165 +536,239 @@ class ChannelCRUDView(APIView):
         
 
 
-class ChannelViewSet(viewsets.ModelViewSet):
-    queryset = Channel.objects.all()
-    serializer_class = ChannelSerializer
-
-    def get_members(self, request, pk=None):
-        channel = self.get_object()
-        members = channel.members.all()
-        serializer = UserSerializer(members, many=True)
-        return Response(serializer.data)
-    
-    def get_admins(self, request, pk=None):
-        channel = self.get_object()
-        members = channel.admins.all()
-        serializer = UserSerializer(members, many=True)
-        return Response(serializer.data)
-    
-    def get_blocked_members(self, request, pk=None):
-        channel = self.get_object()
-        members = channel.blocked_members.all()
-        serializer = UserSerializer(members, many=True)
-        return Response(serializer.data)
-
-    def move_to_admins(self, request, pk=None):
-        channel = self.get_object()
-        user_id = request.data.get('user_id')
-        user = get_object_or_404(User, id=user_id)
-        channel.members.remove(user)
-        channel.admins.add(user)
-        return Response(status=status.HTTP_200_OK)
-
-    def move_to_blocked_members(self, request, pk=None):
-        channel = self.get_object()
-        user_id = request.data.get('user_id')
-        user = get_object_or_404(User, id=user_id)
-        channel.members.remove(user)
-        channel.blocked_members.add(user)
-        return Response(status=status.HTTP_200_OK)
-
-    def delete_member(self, request, pk=None):
-        channel = self.get_object()
-        user_id = request.data.get('user_id')
-        user = get_object_or_404(User, id=user_id)
-        channel.members.remove(user)
-        channel.admins.remove(user)
-        channel.blocked_members.remove(user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    def move_from_blocked_members(self, request, pk=None):
-        channel = self.get_object()
-        user_id = request.data.get('user_id')
-        user = get_object_or_404(User, id=user_id)
-        channel.blocked_members.remove(user)
-        channel.members.add(user)
-        return Response(status=status.HTTP_200_OK)
-    
-    def move_from_admins(self, request, pk=None):
-        channel = self.get_object()
-        user_id = request.data.get('user_id')
-        user = get_object_or_404(User, id=user_id)
-        channel.admins.remove(user)
-        channel.members.add(user)
-        return Response(status=status.HTTP_200_OK)
-    
-
-class PermissionTypeViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Permission.objects.all()
-    serializer_class = PermissionSerializer
-
-
 class PermissionAssignmentAPIView(APIView):
-
     def get(self, request, target_id, target_type):
-        roles = PermissionAssignment.objects.filter(target_type=target_type, target_id=target_id)
-        data = []
-        if roles:
-            for role in roles:
-                serializer = PermissionAssignmentSerializer(role)
-                permissions = serializer.data['permission']
-                permission_array = []
-                for permission in permissions:
-                    permission_data = Permission.objects.filter(pk=permission).first()
-                    if permission_data:
-                        permission_array.append(PermissionSerializer(permission_data).data['permission_type'])
-                
-                updated_data = serializer.data.copy()  # Create a copy of serializer.data
-                updated_data['permission'] = permission_array  # Update the permission field
-                data.append(updated_data)  # Append the updated copy to data
+        try:
+            roles = PermissionAssignment.objects.filter(target_type=target_type, target_id=target_id)
+            data = []
 
-            return Response(data)
+            if roles.exists():
+                for role in roles:
+                    serializer = PermissionAssignmentSerializer(role)
+                    # Retrieve and format permissions
+                    permission_ids = serializer.data.get('permission', [])
+                    permission_array = [
+                        perm.get_permission_type_display()
+                        for perm in Permission.objects.filter(id__in=permission_ids)
+                    ]
+                    
+                    # Create a copy of the serialized data and update the permissions
+                    updated_data = serializer.data.copy()
+                    updated_data['permission'] = permission_array
+                    data.append(updated_data)
+                
+                return Response(data, status=status.HTTP_200_OK)
+            
+            return Response({'message': 'No roles available'}, status=status.HTTP_404_NOT_FOUND)
         
-        return Response({'message': 'No roles available'})
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
-        serializer = PermissionAssignmentSerializer(data=request.data)
-        print("Nigel")
-        
+        permissions_ids = request.data.get('permission', [])
+        all_members = request.data.get('all_members', False)
+        permission_type = request.data.get('permission_type')
+        target_id = request.data.get('target_id')
+        target_type = request.data.get('target_type')
+
+        # Validate target_type against defined choices
+        if target_type not in ['community', 'sub-community', 'group']:
+            return Response(
+                {'error': 'Invalid target type.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create the serializer instance with incoming data
+        serializer = PermissionAssignmentSerializer(data={
+            'permission': permissions_ids,
+            'permission_type': permission_type,
+            'target_id': target_id,
+            'target_type': target_type,
+            'all_members': all_members
+        })
+
+        # Handle member-specific logic
+        if 'members' in request.data:
+            members = request.data.get('members', [])
+
+            # Filter ChannelMembers by target_id for the relevant target_type
+            if target_type == 'community':
+                channel_members = ChannelMembers.objects.filter(channel__id=target_id)
+            elif target_type == 'sub-community':
+                channel_members = SubChannelMembers.objects.filter(sub_channel__id=target_id)
+            elif target_type == 'group':
+                channel_members = SubChannelGroupMembers.objects.filter(group__id=target_id)
+
+            for member in channel_members:
+                if member.type is None:
+                    member.type = []
+
+                # Ensure member.type is a list
+                if not isinstance(member.type, list):
+                    if isinstance(member.type, str):
+                        member.type = ast.literal_eval(member.type)
+                    else:
+                        continue
+
+                # Add or remove the permission type based on members
+                if member.user.id not in members:
+                    if permission_type in member.type:
+                        member.type.remove(permission_type)
+                elif member.user.id in members:
+                    if permission_type and permission_type not in member.type:
+                        member.type.append(permission_type)
+
+                # Save only if changes were made
+                member.save()
+
         if serializer.is_valid():
-            print("Nigel Bah")
-            permission_data = request.data
-            permissions_ids = permission_data.pop('permission', [])
-            members_ids = permission_data.pop('members', [])
-            
-            # Check if the assignment already exists
+            # Check if the permission assignment already exists for the specific target
             existing_assignment = PermissionAssignment.objects.filter(
                 permission__in=permissions_ids,
-                members__in = members_ids,
-                permission_type=permission_data['permission_type'],
-                target_id=permission_data['target_id'],
-                target_type=permission_data['target_type']
+                permission_type=permission_type,
+                target_id=target_id,
+                target_type=target_type
             ).exists()
-            
+
             if existing_assignment:
-                return Response({'error': 'Assignment already exists.'})
+                return Response(
+                    {'error': f"{permission_type} already exists for this {target_type}."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-
-    def put(self, request):
-        try:
-            permission_assignment_id = request.data.get('permission_assignment_id')
-            permission_assignment = PermissionAssignment.objects.get(pk=permission_assignment_id)
-
-            # If permissions_updates are provided, replace the existing permissions
-            if 'permissions_updates' in request.data:
-                permission_data = request.data.get('permissions_updates')
-                new_permission_ids = [data['id'] for data in permission_data]
-                
-                # Clear existing permissions
-                permission_assignment.permission.clear()
-                
-                # Add new permissions
-                permission_assignment.permission.add(*new_permission_ids)
-
-            elif 'permissions_update_members' in request.data:
-                member_data = request.data.get('permissions_update_members')
-                new_member_ids =  member_data
-                
-                # Clear existing permissions
-                permission_assignment.members.clear()
-                
-                # Add new permissions
-                permission_assignment.members.add(*new_member_ids)
-            else:
-                # Update permission_type and all_users if provided
-                permission_type = request.data.get('permission_type')
-                all_users = request.data.get('all_users')
-                permission_assignment.permission_type = permission_type
-                permission_assignment.all_members = all_users
-            
-            # Save the changes
+            # Save the new permission assignment
+            permission_assignment = serializer.save()
+            permission_assignment.permission.set(permissions_ids)
             permission_assignment.save()
-            
-            # Serialize the updated instance
-            serializer = PermissionAssignmentSerializer(permission_assignment)
-            
-            # Return the serialized data in the response
-            return Response(serializer.data, status=status.HTTP_200_OK)
+
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        # Return serializer errors if validation fails
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    
+    
+    def put(self, request):
+        permission_assignment_id = request.data.get('permission_assignment_id')
+
+        if not permission_assignment_id:
+            return Response({"error": "Permission assignment ID not provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            permission_assignment = PermissionAssignment.objects.get(pk=permission_assignment_id)
+        except PermissionAssignment.DoesNotExist:
+            return Response({"error": "Permission assignment not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Handle permission updates
+        if 'permissions_updates' in request.data:
+            permission_data = request.data.get('permissions_updates')
+            new_permission_ids = [data['id'] for data in permission_data]
+
+            # Clear existing permissions and add new ones
+            permission_assignment.permission.clear()
+            permission_assignment.permission.add(*new_permission_ids)
+            return Response({"message": "Update successful"}, status=status.HTTP_200_OK)
+
+        permission_type = request.data.get('permission_type')
+        old_permission_type = request.data.get('old_permission_type', None)
+        all_users = request.data.get('all_members')
+        target_id = request.data.get('target_id')
+        target_type = request.data.get('target_type')
+
+        if 'old_permission_type' in request.data and permission_type is not None:
+            # Choose the appropriate model based on target_type
+            if target_type == 'community':
+                channel_members = ChannelMembers.objects.filter(channel__id=target_id)
+            elif target_type == 'sub-community':
+                channel_members = SubChannelMembers.objects.filter(sub_channel__id=target_id)
+            elif target_type == 'group':
+                channel_members = SubChannelGroupMembers.objects.filter(group__id=target_id)
+            else:
+                return Response({"error": "Invalid target type."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Process members' permission types
+            for member in channel_members:
+                member.type = self.parse_member_type(member.type)
+                if old_permission_type in member.type:
+                    member.type = [permission_type if t == old_permission_type else t for t in member.type]
+                member.save()
+
+        permission_assignment.permission_type = permission_type
+        if all_users is not None:
+            permission_assignment.all_members = all_users
+
+        # Handle members permission assignment if provided
+        if 'members' in request.data:
+            members = request.data.get('members', [])
+
+            # Retrieve members based on the target type
+            if permission_assignment.target_type == 'community':
+                channel_members = ChannelMembers.objects.filter(channel__id=permission_assignment.target_id)
+            elif permission_assignment.target_type == 'sub-community':
+                channel_members = SubChannelMembers.objects.filter(sub_channel__id=permission_assignment.target_id)
+            elif permission_assignment.target_type == 'group':
+                channel_members = SubChannelGroupMembers.objects.filter(group__id=permission_assignment.target_id)
+            else:
+                return Response({"error": "Invalid target type."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update members' permissions
+            for member in channel_members:
+                member.type = self.parse_member_type(member.type)  # Ensure member.type is a list
+                if member.user.id not in members:
+                    if permission_type in member.type:
+                        member.type.remove(permission_type)
+                else:
+                    if permission_type not in member.type:
+                        member.type.append(permission_type)
+                member.save()
+
+            return Response({"message": "Update successful"}, status=status.HTTP_200_OK)
+
+        permission_assignment.save()
+        serializer = PermissionAssignmentSerializer(permission_assignment)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def parse_member_type(self, member_type):
+        """Helper method to parse the member type field safely."""
+        if isinstance(member_type, str):
+            try:
+                return eval(member_type) if member_type else []
+            except Exception as e:
+                print(f"Error parsing member type: {e}")
+                return []
+        return member_type if isinstance(member_type, list) else []
+
+
+
+    def delete(self, request):
+        permission_assignment_id = request.data.get('permission_assignment_id')
+        
+        try:
+            permission_assignment = PermissionAssignment.objects.get(pk=permission_assignment_id)
+            permission_type = permission_assignment.permission_type
+            target_id = permission_assignment.target_id
+            target_type = permission_assignment.target_type
+
+            # Remove the permission from all members based on the target type
+            if target_type == 'community':
+                channel_members = ChannelMembers.objects.filter(channel__id=target_id)
+            elif target_type == 'sub-community':
+                channel_members = SubChannelMembers.objects.filter(sub_channel__id=target_id)
+            elif target_type == 'group':
+                channel_members = SubChannelGroupMembers.objects.filter(group__id=target_id)
+            else:
+                return Response({"error": "Invalid target type."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Iterate through members and remove the permission type from their list
+            for member in channel_members:
+                member.type = self.parse_member_type(member.type)  # Ensure member.type is a list
+                if permission_type in member.type:
+                    member.type.remove(permission_type)
+                member.save()
+
+            # Now delete the PermissionAssignment
+            permission_assignment.delete()
+            return Response({'message': 'PermissionAssignment deleted successfully, and permissions removed from members'}, status=status.HTTP_204_NO_CONTENT)
         
         except PermissionAssignment.DoesNotExist:
             return Response({"error": "PermissionAssignment not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -757,15 +777,27 @@ class PermissionAssignmentAPIView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         
-class PermissionAssignmentListView(generics.ListAPIView):
-    serializer_class = PermissionAssignmentSerializer
+
+class PermissionTypeViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Permission.objects.all()
+    serializer_class = PermissionSerializer
 
     def get_queryset(self):
-        user_ids = self.request.query_params.getlist('user_ids[]', [])  # Get user IDs from query parameters
-        print(user_ids)
-        target_id = self.request.query_params.get('target_id')  # Get target ID from query parameters
-        queryset = PermissionAssignment.objects.filter(members__id__in=user_ids, target_id=target_id)
+        queryset = super().get_queryset()
+        target_type = self.request.query_params.get('target_type')
+        print("000000000000000000000000000000000000000000000:",target_type)
+        if target_type:
+            queryset = queryset.filter(target_type=target_type)
         return queryset
+
+
+
+class PermissionAssignmentListView(generics.ListAPIView):
+    serializer_class = ChannelMembersSerializer
+
+    def get_queryset(self):
+        target_id = self.request.query_params.get('target_id')
+        return ChannelMembers.objects.filter(channel__id=target_id, status__in=[1, 2, 3, 4, 9, 10])
     
 class PermissionRemovalAPIView(APIView):
     
@@ -784,38 +816,174 @@ class PerformActionOnMembers(APIView):
         user = get_object_or_404(User, pk=channel.owner.id)
         serializer = UserSerializer(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
-        
 
     def post(self, request):
-        
         action = request.data.get('action')
         channel_id = request.data.get('channel_id')
-        channel = get_object_or_404(Channel, pk=channel_id)
         user_id = request.data.get('user_id')
-        if action != 'restore':
-            user = get_object_or_404(User, pk=user_id) 
-        
+
+        # Fetch the channel
+        channel = get_object_or_404(Channel, pk=channel_id)
+
+        # Check if user_id is a list when it shouldn't be
+        if isinstance(user_id, list) and action != 'restore':
+            return Response({'error': 'User ID should not be a list for this action.'}, status=status.HTTP_400_BAD_REQUEST)
+        elif not isinstance(user_id, list) and action == 'restore':
+            return Response({'error': 'User ID should be a list for the restore action.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Fetch the target user
+            user = get_object_or_404(User, pk=user_id) if not isinstance(user_id, list) else None
+            member = get_object_or_404(ChannelMembers, channel=channel, user=user) if user else None
+        except TypeError:
+            return Response({'error': 'Invalid user ID format. Expected a number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if the requesting user is the channel owner
+        is_owner = channel.owner == request.user
+
+        # Initialize permissions array to store permissions for the member
+        permissions_array = set()
+
+        # Get assigned permissions based on member's type, only if not the owner
+        if not is_owner and member:
+            assigned_permissions = PermissionAssignment.objects.filter(permission_type__in=member.type)
+            for ap in assigned_permissions:
+                for p in ap.permission.all():
+                    permissions_array.add(p.permission_type)  # Using a set to keep permissions unique
+
+        # Perform actions based on the specified action
         if action == 'band':
-            channel.members.remove(user)
-            channel.blocked_members.add(user)
-            print(channel.blocked_members.get())
+            # Owner can perform any action without permission check
+            if is_owner or 3 in permissions_array:
+                member.status = 5  # Blocked
+                member.save()
+                return Response({'message': 'User has been banned'}, status=status.HTTP_200_OK)
+            else:
+                return Response({'error': 'Sorry, you do not have permission to ban members.'}, status=status.HTTP_403_FORBIDDEN)
 
         elif action == 'kick':
-            channel.members.remove(user)
+            # Owner can perform any action without permission check
+            if is_owner or 4 in permissions_array:
+                member.status = 6  # Removed
+                member.save()
+                return Response({'message': 'User has been removed from the channel'}, status=status.HTTP_200_OK)
+            else:
+                return Response({'error': 'Sorry, you do not have permission to remove members.'}, status=status.HTTP_403_FORBIDDEN)
 
         elif action == 'transfer':
-            channel.owner = user
-            channel.save()
-            channel.members.add(user)
-        
-        elif action == 'restore':
-            for data in user_id:
-                user = get_object_or_404(User, pk=data) 
-                channel.blocked_members.remove(user)
-                channel.members.add(user)
-        
-        return Response({'message': 'User Status has been updated'}, status=status.HTTP_200_OK)
+            # Owner can perform any action without permission check
+            if is_owner or 0 in permissions_array:
+                channel.Original_owner = channel.owner
+                channel.owner = user
+                channel.save()
+                member.user = channel.owner
+                member.type = [1]  # Assuming '1' represents some specific role type
+                member.save()
+                return Response({'message': 'Ownership has been transferred'}, status=status.HTTP_200_OK)
+            else:
+                return Response({'error': 'Sorry, you do not have permission to transfer ownership.'}, status=status.HTTP_403_FORBIDDEN)
 
+        elif action == 'restore':
+            # Handle restoring multiple users, owner can perform any action without permission check
+            if is_owner or 5 in permissions_array:  # Assuming '5' is permission for restoring
+                if isinstance(user_id, list):
+                    restored_users = []
+                    for data in user_id:
+                        user = get_object_or_404(User, pk=data)
+                        member = get_object_or_404(ChannelMembers, channel=channel, user=user)
+                        if member.status == 5:  # Only restore if the user was blocked
+                            member.status = 1  # Active
+                            member.save()
+                            restored_users.append(user.id)
+                    return Response({'message': f'Restored users: {restored_users}'}, status=status.HTTP_200_OK)
+                else:
+                    return Response({'error': 'Invalid data format for user IDs'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If the action does not match any known action
+        return Response({'error': 'Invalid action specified'}, status=status.HTTP_400_BAD_REQUEST)
+    
+
+
+class MFAViewSet(viewsets.GenericViewSet, mixins.RetrieveModelMixin, mixins.UpdateModelMixin, mixins.CreateModelMixin):
+    serializer_class = MFADataSerializer
+    
+    
+    @action(detail=False, methods=['GET'], url_path='')
+    def get(self, request, *args, **kwargs):
+        channel_id = self.kwargs.get('channel_id')
+        try:
+            return  Response(MFADataSerializer(MFA.objects.get(channel_id=channel_id)).data,  status=status.HTTP_200_OK)
+        except MFA.DoesNotExist:
+            return Response({'error': 'MFA not found for this channel'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['POST'], url_path='create')
+    def create_MFA(self, request, *args, **kwargs):
+        channel_id = self.kwargs.get('channel_id')
+        try:
+            Channel.objects.get(id=channel_id)
+            mfa, created = MFA.objects.get_or_create(channel_id=channel_id)
+            mfa.generate_code()
+            mfa.save()
+            serializer = self.get_serializer(mfa)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Channel.DoesNotExist:
+            return Response({'error': 'Channel not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['POST'], url_path='regenerate')
+    def regenerate_code(self, request, *args, **kwargs):
+        channel_id = self.kwargs.get('channel_id')
+        if not channel_id:
+            return Response({'error': 'Channel ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            mfa = MFA.objects.get(channel_id=channel_id)
+            mfa.generate_code()
+            mfa.save()
+            serializer = self.get_serializer(mfa)
+            return Response({'code': mfa.code}, status=status.HTTP_200_OK)
+        except MFA.DoesNotExist:
+            return Response({'error': 'MFA code not found for this channel'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['POST'], url_path='verify')
+    def verify_code(self, request, *args, **kwargs):
+        channel_id = self.kwargs.get('channel_id')
+        code = request.data.get('code')
+        
+        if not channel_id or not code:
+            return Response({'error': 'Channel ID and code are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            mfa = MFA.objects.get(channel_id=channel_id)
+            if mfa.code == code:
+                return Response({'success': True}, status=status.HTTP_200_OK)
+            else:
+                return Response({'success': False}, status=status.HTTP_400_BAD_REQUEST)
+        except MFA.DoesNotExist:
+            return Response({'error': 'MFA code not found for this channel'}, status=status.HTTP_404_NOT_FOUND)
+        
+        
+    @action(detail=False, methods=['DELETE'], url_path='disable')
+    def disable_MFA(self, request, *args, **kwargs):
+        channel_id = self.kwargs.get('channel_id')
+        
+        if not channel_id:
+            return Response({'error': 'Channel ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Check if the channel exists
+            Channel.objects.get(id=channel_id)
+            
+            # Retrieve and delete the MFA record
+            mfa = MFA.objects.get(channel_id=channel_id)
+            mfa.delete()
+            
+            return Response({'success': 'MFA disabled successfully'}, status=status.HTTP_204_NO_CONTENT)
+        
+        except Channel.DoesNotExist:
+            return Response({'error': 'Channel not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        except MFA.DoesNotExist:
+            return Response({'error': 'MFA record not found for this channel'}, status=status.HTTP_404_NOT_FOUND)
 
 
 class GetBanedMembers(APIView):
@@ -824,3 +992,422 @@ class GetBanedMembers(APIView):
         channel = get_object_or_404(Channel, pk=channel_id)
         serializer = ChannelSerializer2(channel)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+class GetAllChannelMembers(APIView):
+
+    def get(self, request, channel_id):
+        channel = get_object_or_404(Channel, pk=channel_id)
+        serializer = ChannelMembersSerializer1(channel)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+class GetAllSubChannelMembers(APIView):
+
+    def get(self, request, sub_channel_id):
+        subchannel = get_object_or_404(SubChannel, id=sub_channel_id)
+        serializer = SubChannelMembersSerializer1(subchannel)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        # Access JSON data directly from request.data
+        sub_channel_id = request.data.get('sub_channel_id')
+        members_list = request.data.get('members', [])  # Default to empty list if no members are provided
+
+        # Ensure members_list is a list
+        if not isinstance(members_list, list):
+            return Response({'detail': 'Invalid members data format'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the SubChannel instance
+        subchannel = get_object_or_404(SubChannel, id=sub_channel_id)
+        
+        is_owner = request.user == subchannel.channel.owner
+
+        # Initialize permissions array to store permissions for the member
+        permissions_array = set()
+        
+        member_type = []
+        channel = Channel.objects.filter(id=subchannel.channel.id).first()
+        
+        # Check the member type in the channel
+        channel_member = ChannelMembers.objects.filter(channel=channel, user=request.user).first()
+        if channel_member:
+            member_type.append(channel_member.type)
+
+        # Check the member type in the subchannel
+        subchannel_member = SubChannelMembers.objects.filter(sub_channel=subchannel, user=request.user).first()
+        if subchannel_member:
+            member_type.append(subchannel_member.type)
+
+        # Check assigned permissions based on the user's role, if not the owner
+        if not is_owner:
+            if channel_member:
+                assigned_permissions = PermissionAssignment.objects.filter(
+                    permission_type__in=channel_member.type, 
+                    target_id=subchannel.id, 
+                    target_type='sub-community'
+                )
+                for ap in assigned_permissions:
+                    for p in ap.permission.all():
+                        permissions_array.add(p.permission_type)
+
+            # If the user does not have permission to add/remove members, return a 403 Forbidden
+            if 1 not in permissions_array and 4 not in permissions_array:  # 1 = 'Add Members', 4 = 'Remove Members'
+                return Response({'detail': 'You do not have permission to manage members in this subchannel.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get the current members of the subchannel
+        current_members = SubChannelMembers.objects.filter(sub_channel=subchannel).order_by('id')
+
+        # Extract current member user IDs while maintaining order
+        current_member_ids = list(current_members.values_list('user_id', flat=True))
+
+        # Ensure incoming members list is a list of IDs in order
+        incoming_member_ids = list(map(int, members_list))
+
+        print("Members to be added or reordered:", incoming_member_ids)
+        print("Current members:", current_member_ids)
+
+        # First, check if the incoming list is exactly the same as the current (in terms of order)
+        if incoming_member_ids == current_member_ids:
+            return Response({'detail': 'No changes needed, members are already up to date'}, status=status.HTTP_200_OK)
+
+        # Determine members to add and remove (ignoring order for now)
+        current_member_set = set(current_member_ids)
+        incoming_member_set = set(incoming_member_ids)
+
+        members_to_add = incoming_member_set - current_member_set  # Members in incoming but not in current
+        members_to_remove = current_member_set - incoming_member_set  # Members in current but not in incoming
+
+        # Handle adding new members
+        for member_id in members_to_add:
+            user = get_object_or_404(User, id=member_id)
+            SubChannelMembers.objects.create(sub_channel=subchannel, user=user, status=4)
+
+        # Handle removing members no longer part of the subchannel
+        SubChannelMembers.objects.filter(sub_channel=subchannel, user_id__in=members_to_remove).delete()
+
+        # Handle reordering (if members to remove/add were empty, this will adjust the order)
+        if members_to_add or members_to_remove:
+            # Only reorder if changes were made to members
+            remaining_members = [m for m in incoming_member_ids if m not in members_to_remove]
+            for idx, member_id in enumerate(remaining_members):
+                member = SubChannelMembers.objects.filter(sub_channel=subchannel, user_id=member_id).first()
+                if member:
+                    member.status = 4  # Update status if necessary or some other reordering logic
+                    member.save()
+        else:
+            # Reordering logic without changing members
+            for idx, member_id in enumerate(incoming_member_ids):
+                member = SubChannelMembers.objects.filter(sub_channel=subchannel, user_id=member_id).first()
+                if member:
+                    member.status = 4  # You can use this to represent the order if needed
+                    member.save()
+
+        return Response({'detail': 'Subchannel members updated and reordered successfully'}, status=status.HTTP_200_OK)
+
+
+
+class GetAllGroupMembers(APIView):
+
+    def get(self, request, group_id):
+        group = get_object_or_404(Group, id=group_id)
+        serializer = GroupMembersSerializer(group)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        # Access JSON data directly from request.data
+        group_id = request.data.get('group_id')
+        members_list = request.data.get('members', [])  # Default to empty list if no members are provided
+        # Ensure members_list is a list
+        if not isinstance(members_list, list):
+            return Response({'detail': 'Invalid members data format'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the Group instance
+        group = get_object_or_404(Group, id=group_id)
+        
+        is_owner = request.user == group.subchannel.channel.owner
+
+        # Initialize permissions array to store permissions for the member
+        permissions_array = set()
+        
+        member_type = []
+        channel = Channel.objects.filter(id=group.subchannel.channel.id).first()
+        
+        # Check the member type in the channel
+        channel_member = ChannelMembers.objects.filter(channel=channel, user=request.user).first()
+        if channel_member:
+            member_type.append(channel_member.type)
+
+        # Check the member type in the group
+        group_member = SubChannelGroupMembers.objects.filter(group=group, user=request.user).first()
+        if group_member:
+            member_type.append(group_member.type)
+
+        # Check assigned permissions based on the user's role, if not the owner
+        if not is_owner:
+            if channel_member:
+                assigned_permissions = PermissionAssignment.objects.filter(
+                    permission_type__in=channel_member.type, 
+                    target_id=group.id, 
+                    target_type='group'
+                )
+                for ap in assigned_permissions:
+                    for p in ap.permission.all():
+                        permissions_array.add(p.permission_type)
+
+            # If the user does not have permission to add/remove members, return a 403 Forbidden
+            if 1 not in permissions_array and 4 not in permissions_array:  # 1 = 'Add Members', 4 = 'Remove Members'
+                return Response({'detail': 'You do not have permission to manage members in this group.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get the current members of the group
+        current_members = SubChannelGroupMembers.objects.filter(group=group).order_by('id')
+
+        # Extract current member user IDs while maintaining order
+        current_member_ids = list(current_members.values_list('user_id', flat=True))
+
+        # Ensure incoming members list is a list of IDs in order
+        incoming_member_ids = list(map(int, members_list))
+
+        print("Members to be added or reordered:", incoming_member_ids)
+        print("Current members:", current_member_ids)
+
+        # First, check if the incoming list is exactly the same as the current (in terms of order)
+        if incoming_member_ids == current_member_ids:
+            return Response({'detail': 'No changes needed, members are already up to date'}, status=status.HTTP_200_OK)
+
+        # Determine members to add and remove (ignoring order for now)
+        current_member_set = set(current_member_ids)
+        incoming_member_set = set(incoming_member_ids)
+
+        members_to_add = incoming_member_set - current_member_set  # Members in incoming but not in current
+        members_to_remove = current_member_set - incoming_member_set  # Members in current but not in incoming
+
+        # Handle adding new members
+        for member_id in members_to_add:
+            user = get_object_or_404(User, id=member_id)
+            SubChannelGroupMembers.objects.create(group=group, user=user, status=4)
+
+        # Handle removing members no longer part of the group
+        SubChannelGroupMembers.objects.filter(group=group, user_id__in=members_to_remove).delete()
+
+        # Handle reordering (if members to remove/add were empty, this will adjust the order)
+        if members_to_add or members_to_remove:
+            # Only reorder if changes were made to members
+            remaining_members = [m for m in incoming_member_ids if m not in members_to_remove]
+            for idx, member_id in enumerate(remaining_members):
+                member = SubChannelGroupMembers.objects.filter(group=group, user_id=member_id).first()
+                if member:
+                    member.status = 4  # Update status if necessary or some other reordering logic
+                    member.save()
+        else:
+            # Reordering logic without changing members
+            for idx, member_id in enumerate(incoming_member_ids):
+                member = SubChannelGroupMembers.objects.filter(group=group, user_id=member_id).first()
+                if member:
+                    member.status = 4  # You can use this to represent the order if needed
+                    member.save()
+
+        return Response({'detail': 'Group members updated and reordered successfully'}, status=status.HTTP_200_OK)
+
+
+  
+
+class GetAllgroupeMembers(APIView):
+
+    def get(self, request, channel_id):
+        channel = get_object_or_404(Channel, pk=channel_id)
+        serializer = ChannelMembersSerializer1(channel)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+class GetChannelOwner(APIView):
+
+    def get(self, request, channel_id):
+        channel = get_object_or_404(Channel, pk=channel_id)
+        serializer = ChannelOwnerSerializer(channel)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+
+class ChannelViewSet(mixins.ListModelMixin,
+                     mixins.RetrieveModelMixin,
+                     viewsets.GenericViewSet):
+    queryset = Channel.objects.all()
+    serializer_class = ChannelSerializer
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class JoinView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self, target_type):
+        """Dynamically return the appropriate serializer based on target_type."""
+        if target_type == 'channel':
+            return ChannelJoinSerializer
+        elif target_type == 'subchannel':
+            return SubChannelJoinSerializer
+        elif target_type == 'group':
+            return GroupJoinSerializer
+        return None
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        target_type = data.get('target_type')
+        target_id = data.get('target_id')
+        target_action = data.get('target_action')
+        user = request.user
+        membership_data = []
+
+        if not target_type or not target_id or not target_action:
+            return Response({'error': 'target_type, target_id, and target_action are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer_class = self.get_serializer_class(target_type)
+        if serializer_class is None:
+            return Response({'error': 'Invalid target type'}, status=status.HTTP_400_BAD_REQUEST)
+
+        target = get_object_or_404(serializer_class.Meta.model, id=target_id)
+
+        if target_type == 'channel':
+            status_value = 1 if target.open else 0  # 1 for Active, 0 for Requested
+            channel_member, created = ChannelMembers.objects.get_or_create(channel=target, user=user)
+            if target_action == 'following':
+                channel_member.status = 8 if channel_member.status == 7 else 7
+            elif target_action == 'connecting':
+                channel_member.status = 11 if channel_member.status == 10 else (0 if target.open else 10)
+            channel_member.save()
+            user_channel_membership = ChannelMembers.objects.filter(user=user)
+            for member in user_channel_membership:
+                membership_data.append({
+                    'id': member.id,
+                    'status': member.get_status_display(),
+                    'target': {
+                        'id': target_id,
+                        'name': target.name,
+                    }
+                })
+            message = 'Joined channel successfully' if target.open else 'Channel join request sent'
+        
+        elif target_type == 'subchannel':
+            status_value = 1 if target.open else 0  # 1 for Active, 0 for Requested
+            subchannel_member, created = SubChannelMembers.objects.get_or_create(sub_channel=target, user=user)
+            if target_action == 'following':
+                subchannel_member.status = 8 if subchannel_member.status == 7 else 7
+            elif target_action == 'connecting':
+                subchannel_member.status = 11 if subchannel_member.status == 10 else (10 if not target.open else subchannel_member.status)
+            subchannel_member.save()
+            user_channel_membership = ChannelMembers.objects.filter( user=user)
+            for member in user_channel_membership:
+                membership_data.append({
+                    'id': member.id,
+                    'status': member.get_status_display(),
+                    'target': {
+                        'id': target_id,
+                        'name': target.name,
+                    }
+                })
+            message = 'Joined subchannel successfully' if target.open else 'Subchannel join request sent'
+
+        elif target_type == 'group':
+            status_value = 1 if target.open else 0  # 1 for Active, 0 for Requested
+            group_member, created = SubChannelGroupMembers.objects.get_or_create(group=target, user=user)
+            if target_action == 'following':
+                group_member.status = 8 if group_member.status == 7 else 7
+            elif target_action == 'connecting':
+                group_member.status = 11 if group_member.status == 10 else (10 if not target.open else group_member.status)
+            group_member.save()
+            message = 'Joined group successfully' if target.open else 'Group join request sent'
+        
+        else:
+            return Response({'error': 'Invalid target type'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'memberships': membership_data, 'message': message}, status=status.HTTP_200_OK)
+
+    def get(self, request, *args, **kwargs):
+        data = request.query_params
+        target_type = data.get('target_type')
+        user = request.user
+
+        if not target_type:
+            return Response({'error': 'target_type is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer_class = self.get_serializer_class(target_type)
+        if serializer_class is None:
+            return Response({'error': 'Invalid target type'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if target_type == 'channel':
+            memberships = ChannelMembers.objects.filter(user=user)
+        elif target_type == 'subchannel':
+            memberships = SubChannelMembers.objects.filter(user=user)
+        elif target_type == 'group':
+            memberships = SubChannelGroupMembers.objects.filter(user=user)
+        else:
+            return Response({'error': 'Invalid target type'}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership_data = []
+        for membership in memberships:
+            if target_type == 'channel':
+                target_id = membership.channel.id
+                target_name = membership.channel.name
+            elif target_type == 'subchannel':
+                target_id = membership.sub_channel.id
+                target_name = membership.sub_channel.name
+            elif target_type == 'group':
+                target_id = membership.group.id
+                target_name = membership.group.name
+
+            membership_data.append({
+                'id': membership.id,
+                'status': membership.get_status_display(),
+                'target': {
+                    'id': target_id,
+                    'name': target_name,
+                }
+            })
+
+        return Response({'memberships': membership_data}, status=status.HTTP_200_OK)
+    
+
+
+
+class InviteLinkView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, channel_id):
+        try:
+            channel = Channel.objects.get(id=channel_id)
+            invite_link, created = InviteLink.objects.get_or_create(channel=channel)
+            serializer = InviteLinkSerializer(invite_link)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Channel.DoesNotExist:
+            return Response({"detail": "Channel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def post(self, request, channel_id):
+        try:
+            channel = Channel.objects.get(id=channel_id)
+            # Delete the existing invite link if it exists
+            InviteLink.objects.filter(channel=channel).delete()
+            invite_link = InviteLink.objects.create(channel=channel)
+            serializer = InviteLinkSerializer(invite_link)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Channel.DoesNotExist:
+            return Response({"detail": "Channel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def put(self, request, channel_id):
+        try:
+            channel = Channel.objects.get(id=channel_id)
+            invite_link, created = InviteLink.objects.get_or_create(channel=channel)
+            invite_link.token = uuid.uuid4()  # Regenerate the invite link token
+            invite_link.save()
+            serializer = InviteLinkSerializer(invite_link)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Channel.DoesNotExist:
+            return Response({"detail": "Channel not found"}, status=status.HTTP_404_NOT_FOUND)

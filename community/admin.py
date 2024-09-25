@@ -1,7 +1,5 @@
-# admin.py
-
 from django.contrib import admin
-from .models import Channel, Permission, PermissionAssignment, SubChannel, Group
+from .models import MFA, Channel, ChannelMembers, Permission, PermissionAssignment, SubChannel, Group, SubChannelGroupMembers, SubChannelMembers
 
 class ChannelAdmin(admin.ModelAdmin):
     list_display = ('id', 'owner', 'name', 'description', 'logo_url')
@@ -37,10 +35,14 @@ class PermissionAssignmentAdmin(admin.ModelAdmin):
     list_display = ('id', 'permission_type', 'target_id', 'target_type', 'all_members')
     search_fields = ('permission_type', 'target_id', 'target_type')
     list_filter = ('permission', 'target_type', 'all_members')
-    filter_horizontal = ('permission', 'members')  # Add this if you want a horizontal filter for many-to-many fields
+    filter_horizontal = ('permission',)  # Removed 'members' from filter_horizontal
 
 admin.site.register(Channel, ChannelAdmin)
 admin.site.register(SubChannel, SubChannelAdmin)
 admin.site.register(Group, GroupAdmin)
 admin.site.register(Permission)
 admin.site.register(PermissionAssignment, PermissionAssignmentAdmin)
+admin.site.register(ChannelMembers)
+admin.site.register(SubChannelMembers)
+admin.site.register(SubChannelGroupMembers)
+admin.site.register(MFA)

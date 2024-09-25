@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from .models import Message, GroupChat
+
+from user.models import Message
+from .models import  GroupChat
 
 class MessageSerializer(serializers.ModelSerializer):
     class Meta:

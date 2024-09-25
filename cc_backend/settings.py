@@ -23,8 +23,6 @@ AUTHENTICATION_BACKENDS = [
     'cc_backend.backends.CustomUserBackend',  
 ]
 
-
-
 ALLOWED_HOSTS = ['*']
 
 # Application definition
@@ -46,20 +44,14 @@ INSTALLED_APPS = [
     'messaging',
 ]
 
-
 # Specify the ASGI application
 ASGI_APPLICATION = 'cc_backend.asgi.application'
 
-# Define channel layers
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            'hosts': [('127.0.0.1', 6379)],  # Update this if you have a different Redis configuration
-        },
+        'BACKEND': 'channels.layers.InMemoryChannelLayer', 
     },
 }
-
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -92,6 +84,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'cc_backend.wsgi.application'
 
+# Swagger settings (optional)
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
         'basic': {
@@ -111,14 +104,21 @@ CORS_ALLOW_CREDENTIALS = True
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-        # Add any other authentication classes you need here
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
     ],
 }
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:19006",
 ]
-
 
 # Set the expiration time for access and refresh tokens
 SIMPLE_JWT = {
@@ -136,8 +136,6 @@ SIMPLE_JWT = {
 }
 
 # Database
-# https://docs.djangoproject.com/en/5.0/ref/settings/#databases
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -146,8 +144,6 @@ DATABASES = {
 }
 
 # Password validation
-# https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -164,8 +160,6 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Internationalization
-# https://docs.djangoproject.com/en/5.0/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'UTC'
@@ -175,11 +169,7 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.0/howto/static-files/
-
-STATIC_URL = '/static/'  # Change 'static/' to '/static/'
+STATIC_URL = '/static/'
 
 # Default primary key field type
-# https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
