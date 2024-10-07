@@ -176,3 +176,48 @@ class InviteLink(models.Model):
 
     def __str__(self):
         return f'Invite link for channel: {self.channel.name}'
+    
+    
+    
+class SecurityAction(models.Model):
+    user = models.ForeignKey('user.User', on_delete=models.CASCADE)
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE)  # Link to a specific channel
+    pause_invites = models.BooleanField(default=False)
+    pause_dms = models.BooleanField(default=False)
+    pause_duration = models.IntegerField(default=1)  # Duration in hours
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.user.username} - {self.channel.name} Security Settings'
+    
+    
+class MessageCCFromChannel(models.Model):
+    SUBJECT_CHOICES = [
+        ('report', 'Report Issues'),
+        ('suggestion', 'Add Suggestions for App Improvement'),
+    ]
+    
+    subject = models.CharField(max_length=50, choices=SUBJECT_CHOICES)
+    message = models.TextField()
+    user = models.ForeignKey('user.User', on_delete=models.CASCADE)  # Link to the User model
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE)  # Link to the Channel model
+    created_at = models.DateTimeField(auto_now_add=True)
+    parent_message = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')  # Self-referential FK for replies
+
+    def __str__(self):
+        return f"{self.subject} - {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    
+    
+class ChannelModeration(models.Model):
+    user = models.ForeignKey('user.User', on_delete=models.CASCADE)
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE) 
+    message_request = models.BooleanField(default=False)
+    direct_message = models.BooleanField(default=False)
+    mute_channel = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f'{self.user.username} moderation settings for {self.channel.name}'
+    
+    

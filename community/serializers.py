@@ -2,7 +2,7 @@ from rest_framework import serializers
 import ast
 
 from user.serializers import UserSerializer
-from .models import MFA, Channel, ChannelMembers, Group, InviteLink, Permission, PermissionAssignment, SubChannel, SubChannelGroupMembers, SubChannelMembers
+from .models import MFA, Channel, ChannelMembers, ChannelModeration, Group, InviteLink, MessageCCFromChannel, Permission, PermissionAssignment, SecurityAction, SubChannel, SubChannelGroupMembers, SubChannelMembers
 
 class ChannelSerializer(serializers.ModelSerializer):
     class Meta:
@@ -195,3 +195,36 @@ class MFADataSerializer(serializers.ModelSerializer):
     class Meta:
         model = MFA
         fields = ['code']        
+        
+        
+class SecurityActionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityAction
+        fields = ['user', 'channel', 'pause_invites', 'pause_dms', 'pause_duration', 'created_at', 'updated_at']
+        read_only_fields = ['user', 'created_at', 'updated_at']
+        
+        
+class MessageCCFromChannelSerializer(serializers.ModelSerializer):
+    replies = serializers.SerializerMethodField()
+    parent_message = serializers.PrimaryKeyRelatedField(queryset=MessageCCFromChannel.objects.all(), required=False, allow_null=True)
+
+    class Meta:
+        model = MessageCCFromChannel
+        fields = ['id', 'subject', 'message', 'channel', 'user', 'created_at', 'parent_message', 'replies']
+
+    def get_replies(self, obj):
+        # If this message is a reply (has a parent_message), don't return any replies
+        if obj.parent_message:
+            return None  # Or return [] if you'd prefer an empty array
+        # Otherwise, return all replies for this message
+        return MessageCCFromChannelSerializer(obj.replies.all(), many=True).data
+    
+    
+    
+class ChannelModerationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChannelModeration
+        fields = ['message_request', 'direct_message', 'mute_channel']
+        
+        
+     

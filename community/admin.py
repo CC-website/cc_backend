@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import MFA, Channel, ChannelMembers, Permission, PermissionAssignment, SubChannel, Group, SubChannelGroupMembers, SubChannelMembers
+from .models import MFA, Channel, ChannelMembers, Permission, PermissionAssignment, SecurityAction, SubChannel, Group, SubChannelGroupMembers, SubChannelMembers
 
 class ChannelAdmin(admin.ModelAdmin):
     list_display = ('id', 'owner', 'name', 'description', 'logo_url')
@@ -46,3 +46,4 @@ admin.site.register(ChannelMembers)
 admin.site.register(SubChannelMembers)
 admin.site.register(SubChannelGroupMembers)
 admin.site.register(MFA)
+admin.site.register(SecurityAction)

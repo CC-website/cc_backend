@@ -14,13 +14,13 @@ import ast
 
 from user.models import User
 from user.serializers import UserSerializer
-from .models import MFA, Channel, ChannelMembers, InviteLink, Permission, PermissionAssignment, SubChannel, Group, SubChannelGroupMembers, SubChannelMembers
+from .models import MFA, Channel, ChannelMembers, ChannelModeration, InviteLink, MessageCCFromChannel, Permission, PermissionAssignment, SecurityAction, SubChannel, Group, SubChannelGroupMembers, SubChannelMembers
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, viewsets
 from .models import Channel
-from .serializers import ChannelJoinSerializer, ChannelMembersSerializer, ChannelMembersSerializer1, ChannelOwnerSerializer, ChannelSerializer, ChannelSerializer2, CommunitySerializer, GroupJoinSerializer, GroupMembersSerializer, InviteLinkSerializer, MFADataSerializer, PermissionAssignmentSerializer, PermissionSerializer, SubChannelJoinSerializer, SubChannelMembersSerializer1, SubChannelSerializer, SubGroupSerializer
+from .serializers import ChannelJoinSerializer, ChannelMembersSerializer, ChannelMembersSerializer1, ChannelModerationSerializer, ChannelOwnerSerializer, ChannelSerializer, ChannelSerializer2, CommunitySerializer, GroupJoinSerializer, GroupMembersSerializer, InviteLinkSerializer, MFADataSerializer, MessageCCFromChannelSerializer, PermissionAssignmentSerializer, PermissionSerializer, SecurityActionSerializer, SubChannelJoinSerializer, SubChannelMembersSerializer1, SubChannelSerializer, SubGroupSerializer
 from rest_framework.parsers import MultiPartParser, FormParser
 import json
 from django.views.decorators.http import require_POST
@@ -1411,3 +1411,125 @@ class InviteLinkView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Channel.DoesNotExist:
             return Response({"detail": "Channel not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        
+        
+        
+class SecurityActionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, channel_id):
+        try:
+            channel = Channel.objects.get(id=channel_id)
+            security_action, created = SecurityAction.objects.get_or_create(user=request.user, channel=channel)
+            serializer = SecurityActionSerializer(security_action)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Channel.DoesNotExist:
+            return Response({"error": "Channel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def post(self, request, channel_id):
+        try:
+            channel = Channel.objects.get(id=channel_id)
+            security_action, created = SecurityAction.objects.get_or_create(user=request.user, channel=channel)
+
+            # Update the security action
+            serializer = SecurityActionSerializer(security_action, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_200_OK if not created else status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Channel.DoesNotExist:
+            return Response({"error": "Channel not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    
+    
+class MessageCCFromChannelCreateView(generics.CreateAPIView):
+    queryset = MessageCCFromChannel.objects.all()
+    serializer_class = MessageCCFromChannelSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        print("Request data:", self.request.data)
+        try:
+            serializer.save(user=self.request.user)
+        except Exception as e:
+            print("Error saving message:", e)
+
+        
+
+class UserMessageCCFromChannelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Fetch only parent messages (messages without a parent) ordered by creation date (newest first)
+        parent_messages = MessageCCFromChannel.objects.filter(
+            user=request.user, parent_message__isnull=True
+        ).order_by('-created_at')[:50]  # Limit the number of results to 6
+        
+        # Use the serializer to include nested replies
+        serializer = MessageCCFromChannelSerializer(parent_messages, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        data = request.data.copy()  # Make a mutable copy of request data
+        data['user'] = request.user.id  # Set user ID from the request (use .id as user is a ForeignKey)
+
+        # Check if 'parent_message' is in the data and not null
+        if 'parent_message' in data and data['parent_message']:
+            try:
+                # Ensure the provided parent_message exists in the database
+                parent_message = MessageCCFromChannel.objects.get(id=data['parent_message'])
+                data['parent_message'] = parent_message.id
+            except MessageCCFromChannel.DoesNotExist:
+                return Response({"error": "Parent message not found."}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # If no parent_message is provided, set it to None for standalone messages
+            data['parent_message'] = None
+
+        serializer = MessageCCFromChannelSerializer(data=data)  # Pass the data into the serializer
+
+        if serializer.is_valid():  # Validate the data
+            serializer.save()  # Save the valid data
+            return Response({"message": "Message sent successfully", "data": serializer.data}, status=status.HTTP_201_CREATED)
+        else:
+            print("Serializer errors: ", serializer.errors)
+            return Response({"error": "Data validation failed", "details": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        
+        
+        
+
+class ChannelModerationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, channel_id):
+        try:
+            moderation = ChannelModeration.objects.get(user=request.user, channel_id=channel_id)
+        except ChannelModeration.DoesNotExist:
+            return Response({'detail': 'Moderation settings not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ChannelModerationSerializer(moderation)
+        return Response(serializer.data)
+
+    def post(self, request, channel_id):
+        try:
+            moderation = ChannelModeration.objects.get(user=request.user, channel_id=channel_id)
+        except ChannelModeration.DoesNotExist:
+            moderation = ChannelModeration(user=request.user, channel_id=channel_id)
+
+        moderation_data = request.data.get('moderation')
+
+        if moderation_data == 'message_request':
+            moderation.message_request = not moderation.message_request
+        elif moderation_data == 'direct_message':
+            moderation.direct_message = not moderation.direct_message
+        elif moderation_data == 'mute_channel':
+            moderation.mute_channel = not moderation.mute_channel
+
+        moderation.save()
+        serializer = ChannelModerationSerializer(moderation)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    
+    
+    

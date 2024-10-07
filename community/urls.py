@@ -2,8 +2,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .views import (
-    ChannelCRUDView, ChannelView, GetAllChannelMembers, GetAllGroupMembers, GetAllSubChannelMembers, GetBanedMembers, GetChannelOwner, InviteLinkView, JoinView, MFAViewSet, PerformActionOnMembers, PermissionAssignmentAPIView, PermissionAssignmentListView, PermissionRemovalAPIView, SubChannelPermissionCheckerView, SubChannelView, GroupView,
-    PermissionTypeViewSet, ChannelViewSet
+    ChannelCRUDView, ChannelModerationView, ChannelView, GetAllChannelMembers, GetAllGroupMembers, GetAllSubChannelMembers, GetBanedMembers, GetChannelOwner, InviteLinkView, JoinView, MFAViewSet, MessageCCFromChannelCreateView, PerformActionOnMembers, PermissionAssignmentAPIView, PermissionAssignmentListView, PermissionRemovalAPIView, SecurityActionView, SubChannelPermissionCheckerView, SubChannelView, GroupView,
+    PermissionTypeViewSet, ChannelViewSet, UserMessageCCFromChannelView
 )
 
 # Router for default viewsets
@@ -63,4 +63,10 @@ urlpatterns = [
     path('channels/banned-members/<int:channel_id>/', GetBanedMembers.as_view(), name='banned-members'),
     path('channels/<int:channel_id>/invite-link/', InviteLinkView.as_view(), name='invite-link'),
     path('community_action/', JoinView.as_view(), name='follow-community'),
+    
+    # security actions endpoint
+    path('security-actions/<int:channel_id>/', SecurityActionView.as_view(), name='security-actions'),
+    path('CCmessages-from-channel/', UserMessageCCFromChannelView.as_view(), name='message-create'),
+    path('CCmessages-from-channel/user/', UserMessageCCFromChannelView.as_view(), name='user-messages'),
+    path('moderation-actions/<int:channel_id>/', ChannelModerationView.as_view(), name='channel-moderation-actions'),
 ]

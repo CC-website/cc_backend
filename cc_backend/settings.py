@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'community',
     'user',
     'messaging',
+    'event',
 ]
 
 # Specify the ASGI application
