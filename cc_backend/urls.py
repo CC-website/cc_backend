@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/', include('community.urls')),
     path('api/', include('messaging.urls')),
     path('api/', include('event.urls')),
+    path('api/', include('broadcast.urls')),
     path('user/', include('user.urls')),
     path('docs/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     # Include WebSocket URL routing

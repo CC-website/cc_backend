@@ -5,6 +5,7 @@ from rest_framework import status, viewsets
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.decorators import action
 
+from broadcast.models import Broadcast
 from event.models import Events
 import json
 from event.serializers import EventSerializer
@@ -35,14 +36,10 @@ class EventViewSet(viewsets.ModelViewSet):
             event_data['image'] = request.FILES.get('image')
 
         # Serialize the data
-        print("nnnnnnnnnnnnnnnnnnnnnnnnoooooooooooooooooowwwwwwwwwwwwwwwwwwwwwwwww  1111", event_data)
         serializer = EventSerializer(data=event_data)
-        print("nnnnnnnnnnnnnnnnnnnnnnnnoooooooooooooooooowwwwwwwwwwwwwwwwwwwwwwwww 222", serializer)
         if serializer.is_valid():
-            print("nnnnnnnnnnnnnnnnnnnnnnnnoooooooooooooooooowwwwwwwwwwwwwwwwwwwwwwwww 333", serializer)
             event = serializer.save()  # Save event with image and other data
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        print("nnnnnnnnnnnnnnnnnnnnnnnnoooooooooooooooooowwwwwwwwwwwwwwwwwwwwwwwww 444", serializer)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -50,7 +47,6 @@ class EventViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         # Retrieve and handle event data from the request
         event_data = request.data.get('eventData')
-        print("checking data uuuuuuuuuuuuuuuuuuuu", event_data)
         
         if event_data:
             try:
@@ -79,6 +75,9 @@ class EventViewSet(viewsets.ModelViewSet):
         else:
             queryset = Events.objects.all()
 
+        # Retrieve all broadcasts for the events in the queryset to avoid repeated database queries
+        broadcast_ids = set(Broadcast.objects.filter(content_type='event', content_id__in=queryset.values_list('id', flat=True), is_active=True).values_list('content_id', flat=True))
+
         events = []
         for event in queryset:
             event_data = {
@@ -87,7 +86,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 'description': event.description,
                 'date': event.date,
                 'type': event.type,
-                'price': event.price if event.type == 'paid' else 'Free',
+                'price': 'Free' if event.type != 'paid' else event.price,
                 'status': event.status,
                 'allowJoinChannel': event.allowJoinChannel,
                 'requireForm': event.requireForm,
@@ -95,26 +94,35 @@ class EventViewSet(viewsets.ModelViewSet):
                 'image': event.image.url if event.image else None,
                 'eventPaymentLink': event.eventPaymentLink,
                 'paymentMethod': event.paymentMethod,
+                'broadcast': event.id in broadcast_ids,
             }
             events.append(event_data)
+
 
         return Response(events, status=status.HTTP_200_OK)
 
     def retrieve(self, request, *args, **kwargs):
+        # Get the event instance
         event = self.get_object()
+
+        # Retrieve all broadcasts for the event to avoid repeated database queries
+        is_broadcasted = Broadcast.objects.filter(content_type='event', content_id=event.id, is_active=True).exists()
+
+        # Prepare event data
         event_data = {
             'id': event.id,
             'name': event.name,
             'description': event.description,
             'date': event.date,
             'type': event.type,
-            'price': event.price if event.type == 'paid' else 'Free',
+            'price': 'Free' if event.type != 'paid' else event.price,
             'allowJoinChannel': event.allowJoinChannel,
             'requireForm': event.requireForm,
             'requireAttendeeForm': event.requireAttendeeForm,
             'image': event.image.url if event.image else None,
             'eventPaymentLink': event.eventPaymentLink,
             'paymentMethod': event.paymentMethod,
+            'broadcast': is_broadcasted,
             'formQuestions': [
                 {
                     'id': question.id,
@@ -138,6 +146,7 @@ class EventViewSet(viewsets.ModelViewSet):
                 for question in event.formQuestions2.all()
             ],
         }
+
         return Response(event_data, status=status.HTTP_200_OK)
 
     # Custom action to update event status
