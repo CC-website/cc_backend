@@ -15,9 +15,9 @@ class Events(models.Model):
         DRAFT = 'DRAFT', 'Draft'
 
     name = models.CharField(max_length=255)
-    description = models.TextField()
-    date = models.DateTimeField()
-    type = models.CharField(max_length=100, choices=[('free', 'Free'), ('paid', 'Paid')])
+    description = models.TextField(null=True, blank=True)
+    date = models.DateTimeField(null=True, blank=True)
+    type = models.CharField(max_length=100, null=True, blank=True, choices=[('free', 'Free'), ('paid', 'Paid')])
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     eventPaymentLink = models.CharField(max_length=255, null=True, blank=True)
     paymentMethod = models.CharField(max_length=50, null=True, blank=True)
@@ -43,7 +43,7 @@ class FormQuestion(models.Model):
         ('essay', 'Essay'),
     ]
     event = models.ForeignKey(Events, related_name='formQuestions', on_delete=models.CASCADE)  # For attendees
-    question = models.TextField()
+    question = models.TextField(blank=True)
     type = models.CharField(max_length=50, choices=QUESTION_TYPES)
     wordLimit = models.CharField(max_length=255, blank=True)
     correctOption = models.IntegerField(null=True, blank=True)
@@ -59,7 +59,7 @@ class FormQuestion2(models.Model):
         ('essay', 'Essay'),
     ]
     event = models.ForeignKey(Events, related_name='formQuestions2', on_delete=models.CASCADE)  # For those joining the channel
-    question = models.TextField()
+    question = models.TextField(blank=True)
     type = models.CharField(max_length=50, choices=QUESTION_TYPES)
     wordLimit = models.CharField(max_length=255, blank=True)
     correctOption = models.IntegerField(null=True, blank=True)

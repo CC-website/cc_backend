@@ -25,6 +25,11 @@ class FormQuestionSerializer(serializers.ModelSerializer):
         fields = ['id', 'question', 'type', 'wordLimit', 'correctOption', 'options', 'event']
         extra_kwargs = {
             'event': {'required': False},
+            'options': {'required': False},
+            'correctOption': {'required': False},
+            'wordLimit': {'required': False},
+            'type': {'required': False},
+            'question': {'required': False},
         }
 
     def create(self, validated_data):
@@ -68,6 +73,11 @@ class FormQuestion2Serializer(serializers.ModelSerializer):
         fields = ['id', 'question', 'type', 'wordLimit', 'correctOption', 'options', 'event'] 
         extra_kwargs = {
             'event': {'required': False},
+            'options': {'required': False},
+            'correctOption': {'required': False},
+            'wordLimit': {'required': False},
+            'type': {'required': False},
+            'question': {'required': False},
         }
 
     def create(self, validated_data):
@@ -119,6 +129,11 @@ class EventSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             'image': {'required': False},
+            'type': {'required': False},
+            'formQuestions': {'required': False},
+            'formQuestions2': {'required': False},
+            'allowJoinChannel': {'required': False},
+            'status': {'required': False},
             'price': {'required': False},  # Make price optional
             'eventPaymentLink': {'required': False},  # Make payment link optional
             'paymentMethod': {'required': False},  # Make payment method optional
