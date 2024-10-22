@@ -1,6 +1,7 @@
 from django.db import models
 
 from community.models import Channel
+from user.models import User
 
 # Create your models here.
 
@@ -82,3 +83,13 @@ class FormOption2(models.Model):
 
     def __str__(self):
         return self.text
+
+
+class Room(models.Model):
+    name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class Participant(models.Model):
+    room = models.ForeignKey(Room, related_name='participants', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    joined_at = models.DateTimeField(auto_now_add=True)
