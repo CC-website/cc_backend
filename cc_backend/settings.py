@@ -181,3 +181,15 @@ STATIC_URL = '/static/'
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+
+
+# Automatically log out users after 30 days of inactivity
+# SESSION_COOKIE_AGE = 30 * 24 * 60 * 60  # 30 days in seconds
+# SESSION_COOKIE_AGE = 2  # 2 seconds in seconds
+
+
+# Make the session expire when the browser is closed (optional)
+# SESSION_EXPIRE_AT_BROWSER_CLOSE = False  # Keep the session alive across browser sessions
+
