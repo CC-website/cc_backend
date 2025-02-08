@@ -11,7 +11,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'password', 'email', 'phone_number', 'code']
+        fields = ['username', 'password', 'email', 'phone_number', 'code', 'publicKey']
         extra_kwargs = {'password': {'write_only': True}}
 
     def validate(self, data):
@@ -29,6 +29,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             phone_number=validated_data.get('phone_number'),
             password=make_password(validated_data['password']),
             code=validated_data['code'],
+            publicKey = validated_data['publicKey'],
         )
         return user
 

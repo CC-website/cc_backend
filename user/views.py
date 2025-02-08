@@ -57,6 +57,7 @@ class RegistrationAPIView(APIView):
             serializer = UserRegistrationSerializer(data=request.data)
 
             # Check if email is sent in the request data
+            print("nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn: ", request)
             email = request.data.get('email', '')
             if email:
                 try:
@@ -144,6 +145,7 @@ class LoginAPIView(APIView):
                 
                 # Include additional user information in the response
                 user_data = {
+                    'id': user.id,
                     'username': authenticated_user.username,
                 }
                 if authenticated_user.email:
@@ -428,3 +430,109 @@ class ChatSettingsDetail(APIView):
 
 def messaging(request):
     return render(request, 'user/index.html')
+
+
+
+
+
+class CheckContacts(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            logged_in_user = request.user  # Get logged-in user
+            current_user = User.objects.get(pk=logged_in_user.id)
+
+            print(f"Logged-in user phone: {current_user.phone_number}")
+
+            # Extract the contacts from request data
+            request_contacts = request.data
+
+            # Ensure that request_contacts is a list
+            if not isinstance(request_contacts, list):
+                print("request data", request.data)
+
+                user_contact = None
+                user = None
+
+                if isinstance(request.data, str):
+                    if "@" in request.data and "." in request.data:  # Basic email validation
+                        user_contact = request.data
+                        user = User.objects.get(email=user_contact)
+                    elif request.data.isdigit():  # Check if it's a number
+                        user_contact = request.data
+                        user = User.objects.get(phone_number=user_contact)
+
+                print("Email:", user)
+                name = f'{user.first_name} {user.last_name}'.strip() or user.username
+                image = user.profile_picture.url if user.profile_picture else None
+
+                # Default type is 'single'
+                contact_type = 'single'
+
+                # If the matched contact is the logged-in user, change type to 'self'
+                if user.id == current_user.id:
+                    contact_type = 'self'
+            
+                contact_list = {
+                        "id": user.id,
+                        "contact": user_contact,
+                        "name": name,
+                        "lastMessage": user.about,
+                        "image": image,
+                        "lastMessageTime": "",
+                        "about": user.about,
+                        "unreadCount": 0,
+                        "type": contact_type,
+                        "favorite": False,
+                    }
+
+                # Return the response as JSON
+                return Response(contact_list, status=status.HTTP_200_OK)
+                
+
+            contact_list = []
+            users = User.objects.all()
+            
+            print(request.data)
+
+            for user in users:
+                calling_code = user.code.get('callingCode', '') if isinstance(user.code, dict) else ''
+                contact = f"{calling_code}{user.phone_number}"
+
+                # Check if the user's contact matches any contact in request data
+                if contact in request_contacts or user.phone_number in request_contacts:
+                    name = f'{user.first_name} {user.last_name}'.strip() or user.username
+                    image = user.profile_picture.url if user.profile_picture else None
+
+                    # Default type is 'single'
+                    contact_type = 'single'
+
+                    # If the matched contact is the logged-in user, change type to 'self'
+                    if user.id == current_user.id:
+                        contact_type = 'self'
+
+                    contact_list.append({
+                        "id": user.id,
+                        "contact": contact,
+                        "name": name,
+                        "lastMessage": user.about,
+                        "image": image,
+                        "lastMessageTime": "",
+                        "about": user.about,
+                        "unreadCount": 0,
+                        "type": contact_type,
+                        "favorite": False,
+                    })
+
+            # Return the response as JSON
+            return Response(contact_list, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error: {e}")
+            return Response({"error": "An error occurred while processing the request."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    
+    
+    

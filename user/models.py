@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractUser, Group, Permission
 from django.core.validators import RegexValidator
 
 class User(AbstractUser):
+    id = models.CharField(max_length=8, unique=True, primary_key=True, editable=False, blank=True)
     email = models.EmailField( null=True, blank=True)
     
     phone_regex = RegexValidator(
@@ -26,6 +27,7 @@ class User(AbstractUser):
     settings = models.JSONField(default=dict)
     blocked_users = models.JSONField(default=dict)
     about = models.TextField(default='I am on CC!')
+    publicKey = models.TextField(blank=True, null=True)
 
     groups = models.ManyToManyField(
         Group,
