@@ -57,6 +57,18 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'cc_backend.urls'
 
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:3000',  # React Native development server URL (replace with your actual frontend URL)
+    'http://localhost:19006',  # If you're using Expo on a local server (replace as needed)
+    # Add any other specific origins if needed
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_COOKIE_NAME = 'csrftoken'
+CSRF_COOKIE_SECURE = False  # For development (non-HTTPS)
+CSRF_COOKIE_SAMESITE = 'None'  # Allows cross-site requests
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
